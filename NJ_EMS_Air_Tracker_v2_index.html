@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <title>NJ EMS Air Tracker</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIINfQ3yn5b+MZGBzwlZLqOaZ3nspcQ2tfI=" crossorigin="" />
+
+  <style>
+    :root {
+      --bg:#0f172a;
+      --panel:#111827;
+      --panel2:#1f2937;
+      --text:#f8fafc;
+      --muted:#94a3b8;
+      --border:#334155;
+      --accent:#38bdf8;
+      --good:#22c55e;
+      --warn:#f59e0b;
+      --bad:#ef4444;
+    }
+    * { box-sizing:border-box; }
+    html,body { height:100%; margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
+    body { overflow:hidden; }
+    #app { height:100%; display:grid; grid-template-rows:auto 1fr; }
+    header {
+      padding:10px 12px;
+      padding-top:calc(10px + env(safe-area-inset-top));
+      background:var(--panel);
+      border-bottom:1px solid var(--border);
+      display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+      z-index:1000;
+    }
+    header .title { font-weight:800; letter-spacing:.2px; margin-right:auto; }
+    header .sub { font-size:12px; color:var(--muted); width:100%; }
+    button {
+      appearance:none; border:1px solid var(--border); background:var(--panel2); color:var(--text);
+      border-radius:10px; padding:9px 11px; font-weight:700; cursor:pointer;
+    }
+    button.primary { background:#0369a1; border-color:#0284c7; }
+    button.active { outline:2px solid var(--accent); }
+    #main { min-height:0; display:grid; grid-template-columns:360px 1fr; }
+    #sidebar {
+      background:var(--panel); border-right:1px solid var(--border); overflow:auto;
+      padding:10px; padding-bottom:calc(10px + env(safe-area-inset-bottom));
+    }
+    #map { width:100%; height:100%; }
+    .section-title { font-size:12px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); margin:8px 2px; font-weight:800; }
+    .resource {
+      background:var(--panel2); border:1px solid var(--border); border-radius:12px; padding:10px; margin-bottom:8px;
+    }
+    .resource-top { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }
+    .resource .name { font-weight:800; }
+    .resource .operator { font-size:12px; color:var(--muted); margin-top:2px; }
+    .badge { font-size:11px; font-weight:800; padding:4px 7px; border-radius:999px; white-space:nowrap; }
+    .air { background:#064e3b; color:#bbf7d0; }
+    .ground { background:#78350f; color:#fde68a; }
+    .missing { background:#3f3f46; color:#d4d4d8; }
+    .stale { background:#7f1d1d; color:#fecaca; }
+    .facts { margin-top:8px; display:grid; grid-template-columns:1fr 1fr; gap:5px 10px; font-size:12px; }
+    .facts span { color:var(--muted); }
+    #status {
+      font-size:12px; color:var(--muted); padding:8px 10px; margin-bottom:8px;
+      border:1px solid var(--border); border-radius:10px; background:#0b1220;
+    }
+    .incident-card {
+      border:1px solid var(--border); border-radius:12px; padding:10px; background:#0b1220; margin-bottom:10px;
+    }
+    .incident-card strong { display:block; margin-bottom:4px; }
+    .incident-card small { color:var(--muted); }
+    .legend { font-size:11px; color:var(--muted); line-height:1.5; margin:8px 2px 14px; }
+    .heli-icon {
+      width:34px; height:34px; border-radius:50%;
+      display:flex; align-items:center; justify-content:center;
+      font-size:20px; border:2px solid white;
+      box-shadow:0 2px 8px rgba(0,0,0,.45);
+      transform-origin:center;
+    }
+    .hmh { background:#2563eb; }
+    .rwj { background:#dc2626; }
+    .jem { background:#7c3aed; }
+    .incident-icon {
+      width:24px; height:24px; border-radius:50%; background:#facc15; border:3px solid #111827;
+      box-shadow:0 0 0 3px rgba(250,204,21,.35);
+    }
+    .leaflet-popup-content-wrapper, .leaflet-popup-tip { background:#111827; color:#f8fafc; }
+    .popup-title { font-weight:800; margin-bottom:5px; }
+    .popup-row { font-size:12px; margin:2px 0; }
+    @media(max-width: 760px) {
+      body { overflow:auto; }
+      #app { min-height:100%; height:auto; display:block; }
+      header { position:sticky; top:0; }
+      #main { display:flex; flex-direction:column; }
+      #map { height:430px; min-height:430px; order:1; }
+      #sidebar { order:2; border-right:0; border-top:1px solid var(--border); overflow:visible; }
+    }
+
+    /* Critical Leaflet layout rules, kept inline for mobile Safari reliability. */
+    .leaflet-pane,.leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow,.leaflet-tile-container,.leaflet-pane>svg,.leaflet-pane>canvas,.leaflet-zoom-box { position:absolute; left:0; top:0; }
+    .leaflet-container { overflow:hidden; -webkit-tap-highlight-color:transparent; }
+    .leaflet-tile { filter:inherit; visibility:hidden; }
+    .leaflet-tile-loaded { visibility:inherit; }
+    .leaflet-zoom-animated { transform-origin:0 0; }
+    .leaflet-container .leaflet-overlay-pane svg,.leaflet-container .leaflet-marker-pane img,.leaflet-container .leaflet-shadow-pane img,.leaflet-container .leaflet-tile-pane img,.leaflet-container img.leaflet-image-layer,.leaflet-container .leaflet-tile { max-width:none !important; max-height:none !important; width:auto; padding:0; }
+    .leaflet-control { position:relative; z-index:800; pointer-events:auto; }
+    .leaflet-top,.leaflet-bottom { position:absolute; z-index:1000; pointer-events:none; }
+    .leaflet-top { top:0; } .leaflet-right { right:0; } .leaflet-bottom { bottom:0; } .leaflet-left { left:0; }
+    .leaflet-control-zoom a { display:block; width:30px; height:30px; line-height:30px; text-align:center; text-decoration:none; background:#fff; color:#111; border-bottom:1px solid #ccc; }
+    .leaflet-control-zoom { border:2px solid rgba(0,0,0,.2); border-radius:4px; overflow:hidden; margin:10px; }
+  </style>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="EMS Air">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="title">NJ EMS Air Tracker</div>
+    <button id="incidentBtn" class="primary">Set Incident</button>
+    <button id="locateBtn">My Location</button>
+    <button id="refreshBtn">Refresh</button>
+    <div class="sub">Situational awareness only. ADS-B position does not establish dispatch availability.</div>
+  </header>
+
+  <div id="main">
+    <aside id="sidebar">
+      <div id="status">Starting live aircraft feed...</div>
+
+      <div class="incident-card">
+        <strong>Incident</strong>
+        <div id="incidentText">No incident selected.</div>
+        <small>Tap “Set Incident”, then tap the map. Distances recalculate automatically.</small>
+      </div>
+
+      <div class="section-title">Tracked air medical resources</div>
+      <div id="resources"></div>
+
+      <div class="legend">
+        Data source: ADSB.lol. “Ground” means the aircraft is reporting very low/ground altitude or a ground flag.
+        “Not currently tracked” means no current matching ADS-B report was returned. This does not mean unavailable or out of service.
+      </div>
+    </aside>
+    <div id="map"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<script>
+const CONFIG = {
+  center: [39.9537, -74.1979], // Toms River area
+  zoom: 9,
+  searchRadiusNm: 120,
+  refreshMs: 15000,
+  staleSeconds: 90,
+  apiBase: "https://api.adsb.lol/v2/point",
+  proxyBase: "https://api.cors.lol/?url="
+};
+
+const FLEET = [
+  { hex:"a9d334", reg:"N732HM", name:"HMH AirMed", operator:"Hackensack Meridian", group:"hmh" },
+  { hex:"a703e4", reg:"N551HU", name:"HMH AirMed", operator:"Hackensack Meridian", group:"hmh" },
+  { hex:"a5898b", reg:"N456MT", name:"RWJBH LifeFlight", operator:"RWJBarnabas Health", group:"rwj" },
+  { hex:"a00137", reg:"N1NJ", name:"JEMSTAR / NJSP", operator:"State of New Jersey", group:"jem" },
+  { hex:"a31bd5", reg:"N3NJ", name:"JEMSTAR / NJSP", operator:"State of New Jersey", group:"jem" },
+  { hex:"a63673", reg:"N5NJ", name:"JEMSTAR / NJSP", operator:"State of New Jersey", group:"jem" },
+  { hex:"a95111", reg:"N7NJ", name:"JEMSTAR / NJSP", operator:"State of New Jersey", group:"jem" },
+  { hex:"ac6baf", reg:"N9NJ", name:"JEMSTAR / NJSP", operator:"State of New Jersey", group:"jem" }
+];
+
+const map = L.map("map", { zoomControl:true }).setView(CONFIG.center, CONFIG.zoom);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom:19,
+  attribution:'&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+let markers = {};
+let incidentMarker = null;
+let incidentLatLng = null;
+let choosingIncident = false;
+let lastAircraft = new Map();
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+}
+function nmBetween(lat1, lon1, lat2, lon2) {
+  const R = 3440.065;
+  const toRad = x => x * Math.PI / 180;
+  const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+function isGround(ac) {
+  if (ac.ground === true) return true;
+  if (String(ac.alt_baro).toLowerCase() === "ground") return true;
+  const alt = Number(ac.alt_baro);
+  const gs = Number(ac.gs);
+  return Number.isFinite(alt) && alt < 150 && Number.isFinite(gs) && gs < 30;
+}
+function ageSeconds(ac) {
+  const seenPos = Number(ac.seen_pos);
+  const seen = Number(ac.seen);
+  if (Number.isFinite(seenPos)) return seenPos;
+  if (Number.isFinite(seen)) return seen;
+  return 9999;
+}
+function statusFor(ac) {
+  const age = ageSeconds(ac);
+  if (age > CONFIG.staleSeconds) return {label:"STALE", cls:"stale"};
+  if (isGround(ac)) return {label:"GROUND", cls:"ground"};
+  return {label:"AIRBORNE", cls:"air"};
+}
+function fmtAlt(ac) {
+  if (isGround(ac)) return "Ground";
+  const alt = Number(ac.alt_baro ?? ac.alt_geom);
+  return Number.isFinite(alt) ? `${Math.round(alt).toLocaleString()} ft` : "Unknown";
+}
+function fmtSpeed(ac) {
+  const gs = Number(ac.gs);
+  return Number.isFinite(gs) ? `${Math.round(gs)} kt` : "Unknown";
+}
+function fmtTrack(ac) {
+  const tr = Number(ac.track);
+  return Number.isFinite(tr) ? `${Math.round(tr)}°` : "Unknown";
+}
+function makeIcon(group, track=0) {
+  const emoji = "🚁";
+  return L.divIcon({
+    className:"",
+    html:`<div class="heli-icon ${group}" style="transform:rotate(${Number(track)||0}deg)"><span style="transform:rotate(${-Number(track)||0}deg)">${emoji}</span></div>`,
+    iconSize:[34,34], iconAnchor:[17,17]
+  });
+}
+function setIncident(latlng) {
+  incidentLatLng = latlng;
+  if (incidentMarker) map.removeLayer(incidentMarker);
+  incidentMarker = L.marker(latlng, {
+    icon:L.divIcon({className:"", html:'<div class="incident-icon"></div>', iconSize:[24,24], iconAnchor:[12,12]})
+  }).addTo(map).bindPopup("<b>Incident location</b>");
+  document.getElementById("incidentText").textContent =
+    `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
+  renderResources();
+}
+function aircraftForFleet(f) {
+  return lastAircraft.get(f.hex.toLowerCase()) || null;
+}
+function renderResources() {
+  const box = document.getElementById("resources");
+  box.innerHTML = FLEET.map(f => {
+    const ac = aircraftForFleet(f);
+    if (!ac || !Number.isFinite(Number(ac.lat)) || !Number.isFinite(Number(ac.lon))) {
+      return `<div class="resource">
+        <div class="resource-top">
+          <div><div class="name">${esc(f.name)} · ${esc(f.reg)}</div><div class="operator">${esc(f.operator)}</div></div>
+          <span class="badge missing">NOT TRACKED</span>
+        </div>
+      </div>`;
+    }
+    const st = statusFor(ac);
+    let distance = "";
+    if (incidentLatLng) {
+      distance = nmBetween(incidentLatLng.lat, incidentLatLng.lng, Number(ac.lat), Number(ac.lon));
+    }
+    return `<div class="resource" onclick="focusAircraft('${f.hex}')">
+      <div class="resource-top">
+        <div>
+          <div class="name">${esc(f.name)} · ${esc(f.reg)}</div>
+          <div class="operator">${esc(f.operator)}${ac.flight ? " · " + esc(String(ac.flight).trim()) : ""}</div>
+        </div>
+        <span class="badge ${st.cls}">${st.label}</span>
+      </div>
+      <div class="facts">
+        <div><span>Altitude</span><br>${fmtAlt(ac)}</div>
+        <div><span>Speed</span><br>${fmtSpeed(ac)}</div>
+        <div><span>Heading</span><br>${fmtTrack(ac)}</div>
+        <div><span>Position age</span><br>${Math.round(ageSeconds(ac))} sec</div>
+        ${incidentLatLng ? `<div><span>Incident distance</span><br><b>${distance.toFixed(1)} NM</b></div>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+window.focusAircraft = function(hex) {
+  const m = markers[hex];
+  if (m) {
+    map.setView(m.getLatLng(), Math.max(map.getZoom(), 11));
+    m.openPopup();
+  }
+};
+
+async function refreshAircraft() {
+  const status = document.getElementById("status");
+  status.textContent = "Updating live aircraft positions...";
+  const [lat, lon] = CONFIG.center;
+  const target = `${CONFIG.apiBase}/${lat}/${lon}/${CONFIG.searchRadiusNm}`;
+  const candidates = [
+    target,
+    CONFIG.proxyBase + encodeURIComponent(target),
+    CONFIG.proxyBase + encodeURIComponent(`https://api.airplanes.live/v2/point/${lat}/${lon}/${CONFIG.searchRadiusNm}`)
+  ];
+  try {
+    let data = null;
+    let lastErr = null;
+    for (const url of candidates) {
+      try {
+        const r = await fetch(url, {cache:"no-store", credentials:"omit"});
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const candidateData = await r.json();
+        if (!candidateData || !Array.isArray(candidateData.ac)) throw new Error("Unexpected feed response");
+        data = candidateData;
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (!data) throw lastErr || new Error("No live feed available");
+    const aircraft = Array.isArray(data.ac) ? data.ac : [];
+    const fleetHex = new Set(FLEET.map(x=>x.hex.toLowerCase()));
+    const matches = aircraft.filter(a => fleetHex.has(String(a.hex || "").toLowerCase()));
+    lastAircraft = new Map(matches.map(a => [String(a.hex).toLowerCase(), a]));
+
+    const visibleHex = new Set();
+    for (const f of FLEET) {
+      const ac = aircraftForFleet(f);
+      if (!ac || !Number.isFinite(Number(ac.lat)) || !Number.isFinite(Number(ac.lon))) continue;
+      visibleHex.add(f.hex);
+      const ll = [Number(ac.lat), Number(ac.lon)];
+      const st = statusFor(ac);
+      const popup = `
+        <div class="popup-title">${esc(f.name)} · ${esc(f.reg)}</div>
+        <div class="popup-row">${esc(f.operator)}</div>
+        <div class="popup-row"><b>${st.label}</b></div>
+        <div class="popup-row">Altitude: ${fmtAlt(ac)}</div>
+        <div class="popup-row">Speed: ${fmtSpeed(ac)}</div>
+        <div class="popup-row">Heading: ${fmtTrack(ac)}</div>
+        <div class="popup-row">Position age: ${Math.round(ageSeconds(ac))} sec</div>
+        ${incidentLatLng ? `<div class="popup-row">Incident distance: <b>${nmBetween(incidentLatLng.lat, incidentLatLng.lng, Number(ac.lat), Number(ac.lon)).toFixed(1)} NM</b></div>` : ""}
+      `;
+      if (!markers[f.hex]) {
+        markers[f.hex] = L.marker(ll, {icon:makeIcon(f.group, ac.track)}).addTo(map);
+      } else {
+        markers[f.hex].setLatLng(ll).setIcon(makeIcon(f.group, ac.track));
+      }
+      markers[f.hex].bindPopup(popup);
+    }
+
+    for (const hex of Object.keys(markers)) {
+      if (!visibleHex.has(hex)) {
+        map.removeLayer(markers[hex]);
+        delete markers[hex];
+      }
+    }
+
+    renderResources();
+    const now = new Date();
+    status.textContent = `Live feed updated ${now.toLocaleTimeString()} · ${matches.length} of ${FLEET.length} tracked aircraft currently reporting in ${CONFIG.searchRadiusNm} NM search area.`;
+  } catch (err) {
+    console.error(err);
+    status.textContent = `Live feed error: ${err.message}. All configured live ADS-B sources failed. Tap Refresh to retry.`;
+    renderResources();
+  }
+}
+
+document.getElementById("incidentBtn").addEventListener("click", () => {
+  choosingIncident = !choosingIncident;
+  const b = document.getElementById("incidentBtn");
+  b.classList.toggle("active", choosingIncident);
+  b.textContent = choosingIncident ? "Tap Map..." : "Set Incident";
+});
+map.on("click", e => {
+  if (!choosingIncident) return;
+  setIncident(e.latlng);
+  choosingIncident = false;
+  const b = document.getElementById("incidentBtn");
+  b.classList.remove("active");
+  b.textContent = "Set Incident";
+});
+document.getElementById("locateBtn").addEventListener("click", () => {
+  if (!navigator.geolocation) return alert("Location is not available in this browser.");
+  navigator.geolocation.getCurrentPosition(pos => {
+    const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+    map.setView(ll, 11);
+    setIncident(ll);
+  }, err => alert("Could not obtain your location: " + err.message), {enableHighAccuracy:true, timeout:10000});
+});
+document.getElementById("refreshBtn").addEventListener("click", refreshAircraft);
+
+renderResources();
+setTimeout(() => map.invalidateSize(true), 250);
+window.addEventListener("resize", () => setTimeout(() => map.invalidateSize(false), 100));
+refreshAircraft();
+setInterval(refreshAircraft, CONFIG.refreshMs);
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+}
+</script>
+</body>
+</html>
